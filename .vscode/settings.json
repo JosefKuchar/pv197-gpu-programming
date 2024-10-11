@@ -1,5 +1,6 @@
 {
   "files.associations": {
-    "kernel_CPU.C": "cpp"
+    "kernel_CPU.C": "cpp",
+    "random": "cpp"
   }
 }
