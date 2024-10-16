@@ -2,264 +2,147 @@
 // https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 
-const int BLOCK_SIZE = 512;
+// __global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
+//     int i = blockIdx.x * blockDim.x + threadIdx.x;
+//     account[i] = changes[i];
+//     atomicAdd(&sum[0], account[i]);
+//     for (int j = 1; j < periods; j++) {
+//         int test = account[j * clients + i] =
+//             account[(j - 1) * clients + i] + changes[j * clients + i];
+//         atomicAdd(&sum[j], account[j * clients + i]);
+//     }
+// }
 
-__global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    account[i] = changes[i];
-    atomicAdd(&sum[0], account[i]);
-    for (int j = 1; j < periods; j++) {
-        account[j * clients + i] = account[(j - 1) * clients + i] + changes[j * clients + i];
-        atomicAdd(&sum[j], account[j * clients + i]);
-    }
-}
+#define COLS 16
+#define ROWS 64
+__device__ int temp[8192 * ROWS];
 
-__device__ void warpReduce(volatile int* data, int threadId) {
-    data[threadId] += data[threadId + 32];
-    data[threadId] += data[threadId + 16];
-    data[threadId] += data[threadId + 8];
-    data[threadId] += data[threadId + 4];
-    data[threadId] += data[threadId + 2];
-    data[threadId] += data[threadId + 1];
-}
+// __global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
+//     int i = blockIdx.x * blockDim.x + threadIdx.x;
+//     int initChange = changes[i + threadIdx.y * clients * periods / ROWS];
+//     account[i + threadIdx.y * clients * periods / ROWS] = initChange;
+//     // atomicAdd(&sum[0], account[i]);
+//     int s = initChange;
+//     for (int j = 1; j < periods / ROWS; j++) {
+//         int jj = j + threadIdx.y * periods / ROWS;
+//         int change = changes[jj * clients + i];
+//         s += change;
+//         account[jj * clients + i] = account[(jj - 1) * clients + i] + change;
+//         // atomicAdd(&sum[j], account[j * clients + i]);
+//     }
 
-__global__ void sumScanSingleBlock(int* changes, int* account, int clients) {
-    int clientId = blockIdx.x;
-    int threadId = threadIdx.x;
-    int periods = blockDim.x * 2;
+//     for (int j = threadIdx.y + 1; j < ROWS; j++) {
+//         atomicAdd(&temp[i * ROWS + j], s);
+//     }
+// }
 
-    int shared1Id = threadIdx.x * 2;
-    int shared2Id = threadIdx.x * 2 + 1;
+// __global__ void kernel2(int* account, int* sum, int clients, int periods) {
+//     int i = blockIdx.x * blockDim.x + threadIdx.x;
+//     for (int j = 0; j < periods / ROWS; j++) {
+//         int jj = j + threadIdx.y * periods / ROWS;
+//         account[jj * clients + i] += temp[i * ROWS + threadIdx.y];
+//         // atomicAdd(&sum[jj], account[jj * clients + i]);
+//     }
+// }
 
-    int global1Id = clients * (shared1Id + blockDim.x * blockIdx.y * 2) + clientId;
-    int global2Id = clients * (shared2Id + blockDim.x * blockIdx.y * 2) + clientId;
-
+__global__ void sumScanMultiBlock(int* changes, int* account, int clients, int periods) {
     extern __shared__ int shared[];
+
+    int p = (periods / ROWS);
+    // Offset in shared memory for original values
+    int originalOffset = ROWS * COLS * 4;
+    // Sum offset for reduction sum for shared memory
+    int sumOffset = ROWS * COLS * 2;
+    // "General" block offset for shared memory
+    int blockOffset = threadIdx.x * ROWS * 2;
+    // Indices for shared memory
+    int shared1Id = blockOffset + threadIdx.y * 2;
+    int shared2Id = blockOffset + threadIdx.y * 2 + 1;
+    // Indices for global memory
+    int global1Id = blockIdx.x * blockDim.x + threadIdx.x +
+                    clients * (blockIdx.y * blockDim.y + threadIdx.y * 2);
+    int global2Id = blockIdx.x * blockDim.x + threadIdx.x +
+                    clients * (blockIdx.y * blockDim.y + threadIdx.y * 2 + 1);
     // Load data into shared memory
     shared[shared1Id] = changes[global1Id];
     shared[shared2Id] = changes[global2Id];
-
-    // Reduction phase
-    int offset = 1;
-    for (int d = periods >> 1; d > 0; d >>= 1) {
-        __syncthreads();
-        if (threadId < d) {
-            int ai = offset * (2 * threadId + 1) - 1;
-            int bi = offset * (2 * threadId + 2) - 1;
-            shared[bi] += shared[ai];
-        }
-        offset *= 2;
-    }
-
-    // Clear the last element
-    if (threadId == 0) {
-        shared[periods - 1] = 0;
-    }
-
-    // Post-reduction phase
-    for (int d = 1; d < periods; d *= 2) {
-        offset >>= 1;
-        __syncthreads();
-        if (threadId < d) {
-            int ai = offset * (2 * threadId + 1) - 1;
-            int bi = offset * (2 * threadId + 2) - 1;
-            int t = shared[ai];
-            shared[ai] = shared[bi];
-            shared[bi] += t;
-        }
-    }
-
-    __syncthreads();
-    // Write results to global memory
-    shared[shared1Id] += changes[global1Id];
-    shared[shared2Id] += changes[global2Id];
-    account[global1Id] = shared[shared1Id];
-    account[global2Id] = shared[shared2Id];
-}
-
-__global__ void sumScanMultiBlock(int* changes, int* account, int clients, int* temp) {
-    int clientId = blockIdx.x;
-    int threadId = threadIdx.x;
-    int periods = blockDim.x * 2;
-
-    int shared1Id = threadIdx.x * 2;
-    int shared2Id = threadIdx.x * 2 + 1;
-
-    int global1Id = clients * (shared1Id + blockDim.x * blockIdx.y * 2) + clientId;
-    int global2Id = clients * (shared2Id + blockDim.x * blockIdx.y * 2) + clientId;
-
-    // Block dim x - number of clients
-    // Block dim y - 2
-
-    extern __shared__ int shared[];
-    // Load data into shared memory
-    shared[shared1Id] = changes[global1Id];
-    shared[shared2Id] = changes[global2Id];
-    shared[shared1Id + blockDim.x * 2] = shared[shared1Id];
-    shared[shared2Id + blockDim.x * 2] = shared[shared2Id];
+    // Duplicate values for reduction sum
+    shared[shared1Id + sumOffset] = shared[shared1Id];
+    shared[shared2Id + sumOffset] = shared[shared2Id];
+    // Save original values for post-reduction phase
+    shared[shared1Id + originalOffset] = shared[shared1Id];
+    shared[shared2Id + originalOffset] = shared[shared2Id];
 
     // Reduction sum
-    for (int i = 1; i < blockDim.x * 2; i *= 2) {
-        if (threadId % i == 0) {
-            shared[threadId * 2 + blockDim.x * 2] += shared[threadId * 2 + i + blockDim.x * 2];
+    for (int i = 1; i < ROWS * 2; i *= 2) {
+        if (threadIdx.y % i == 0) {
+            int offset = blockOffset + sumOffset;
+            shared[offset + threadIdx.y * 2] += shared[offset + threadIdx.y * 2 + i];
         }
         __syncthreads();
     }
 
-    if (threadId == 0) {
+    if (threadIdx.y == 0) {
         for (int i = blockIdx.y + 1; i < gridDim.y; i++) {
-            atomicAdd(&temp[gridDim.y * blockIdx.x + i], shared[blockDim.x * 2]);
+            atomicAdd(&temp[i + gridDim.y * (blockIdx.x * blockDim.x + threadIdx.x)],
+                      shared[blockOffset + sumOffset]);
         }
-        // atomicExch(&atom[gridDim.y * blockIdx.x + blockIdx.y], 1);
     }
 
     // Reduction phase
     int offset = 1;
-    for (int d = periods >> 1; d > 0; d >>= 1) {
+    for (int d = p >> 1; d > 0; d >>= 1) {
         __syncthreads();
-        if (threadId < d) {
-            int ai = offset * (2 * threadId + 1) - 1;
-            int bi = offset * (2 * threadId + 2) - 1;
-            shared[bi] += shared[ai];
+        if (threadIdx.y < d) {
+            int ai = offset * (2 * threadIdx.y + 1) - 1;
+            int bi = offset * (2 * threadIdx.y + 2) - 1;
+            shared[blockOffset + bi] += shared[blockOffset + ai];
         }
         offset *= 2;
     }
 
     // Clear the last element
-    if (threadId == 0) {
-        shared[periods - 1] = 0;
+    if (threadIdx.y == 0) {
+        shared[blockOffset + p - 1] = 0;
     }
 
     // Post-reduction phase
-    for (int d = 1; d < periods; d *= 2) {
+    for (int d = 1; d < p; d *= 2) {
         offset >>= 1;
         __syncthreads();
-        if (threadId < d) {
-            int ai = offset * (2 * threadId + 1) - 1;
-            int bi = offset * (2 * threadId + 2) - 1;
-            int t = shared[ai];
-            shared[ai] = shared[bi];
-            shared[bi] += t;
+        if (threadIdx.y < d) {
+            int ai = offset * (2 * threadIdx.y + 1) - 1;
+            int bi = offset * (2 * threadIdx.y + 2) - 1;
+            int t = shared[blockOffset + ai];
+            shared[blockOffset + ai] = shared[blockOffset + bi];
+            shared[blockOffset + bi] += t;
         }
     }
 
     __syncthreads();
-    // Write results to global memory
-    shared[shared1Id] += changes[global1Id] + temp[gridDim.y * blockIdx.x + blockIdx.y];
-    shared[shared2Id] += changes[global2Id] + temp[gridDim.y * blockIdx.x + blockIdx.y];
+    // Add original values to the results, because algorithm produces prefix sum without them
+    shared[shared1Id] += shared[shared1Id + originalOffset];
+    shared[shared2Id] += shared[shared2Id + originalOffset];
+    // Write results back to global memory
     account[global1Id] = shared[shared1Id];
     account[global2Id] = shared[shared2Id];
 }
 
-__global__ void sumReduceSingleBlock(int* account, int* sum, int clients, int periods) {
-    extern __shared__ int shared[];
-    // Each thread loads two elements into shared memory
-    shared[threadIdx.x] = account[blockIdx.x * clients + threadIdx.x];
-    __syncthreads();
-
-    for (int i = blockDim.x / 2; i > 32; i >>= 1) {
-        if (threadIdx.x < i) {
-            shared[threadIdx.x] += shared[threadIdx.x + i];
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x < 32) {
-        warpReduce(shared, threadIdx.x);
-    }
-    if (threadIdx.x == 0) {
-        sum[blockIdx.x] = shared[0];
-    }
-}
-
-// __global__ void sumReduceSingleBlock(int* account, int* sum, int clients, int periods) {
-//     extern __shared__ int shared[];
-//     // Each thread loads two elements into shared memory
-//     shared[threadIdx.x * 2] =
-//         account[blockIdx.x * clients + threadIdx.x * 2 + blockIdx.y * blockDim.x * 2];
-//     shared[threadIdx.x * 2 + 1] =
-//         account[blockIdx.x * clients + threadIdx.x * 2 + 1 + blockIdx.y * blockDim.x * 2];
-
-//     for (int i = 1; i < blockDim.x * 2; i *= 2) {
-//         if (threadIdx.x % i == 0) {
-//             shared[threadIdx.x * 2] += shared[threadIdx.x * 2 + i];
-//         }
-//         __syncthreads();
-//     }
-//     if (threadIdx.x == 0) {
-//         sum[blockIdx.x] = shared[0];
-//     }
-// }
-
-// __global__ void kernel3(int* changes, int* account, int* sum, int clients, int* temp) {
-//     int globalId = clients * (threadIdx.x + blockDim.x * blockIdx.y) + blockIdx.x;
-//     account[globalId] += temp[gridDim.y * blockIdx.x + blockIdx.y];
-// }
-
-__global__ void sumkernel(int* account, int* sum, int clients, int periods, int* temp) {
-    extern __shared__ int shared[];
-    // Each thread loads two elements into shared memory
-    shared[threadIdx.x * 2] =
-        account[blockIdx.x * clients + threadIdx.x * 2 + blockIdx.y * blockDim.x * 2];
-    shared[threadIdx.x * 2 + 1] =
-        account[blockIdx.x * clients + threadIdx.x * 2 + 1 + blockIdx.y * blockDim.x * 2];
-
-    for (int i = 1; i < blockDim.x * 2; i *= 2) {
-        if (threadIdx.x % i == 0) {
-            shared[threadIdx.x * 2] += shared[threadIdx.x * 2 + i];
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0) {
-        temp[blockIdx.x * gridDim.y + blockIdx.y] = shared[0];
-    }
-}
-
-__global__ void sumkernel2(int* account, int* sum, int clients, int periods, int* temp) {
-    extern __shared__ int shared[];
-    shared[threadIdx.x * 2] = temp[blockIdx.x * 8 + threadIdx.x * 2];
-    shared[threadIdx.x * 2 + 1] = temp[blockIdx.x * 8 + threadIdx.x * 2 + 1];
-
-    for (int i = 1; i < blockDim.x * 2; i *= 2) {
-        if (threadIdx.x % i == 0) {
-            shared[threadIdx.x * 2] += shared[threadIdx.x * 2 + i];
-        }
-        __syncthreads();
-    }
-    if (threadIdx.x == 0) {
-        sum[blockIdx.x] = shared[0];
-    }
+__global__ void kernel2(int* account, int clients, int periods) {
+    // Indices for global memory
+    int global1Id = blockIdx.x * blockDim.x + threadIdx.x +
+                    clients * (blockIdx.y * blockDim.y + threadIdx.y * 2);
+    int global2Id = blockIdx.x * blockDim.x + threadIdx.x +
+                    clients * (blockIdx.y * blockDim.y + threadIdx.y * 2 + 1);
+    account[global1Id] += temp[blockIdx.y + gridDim.y * (blockIdx.x * blockDim.x + threadIdx.x)];
+    account[global2Id] += temp[blockIdx.y + gridDim.y * (blockIdx.x * blockDim.x + threadIdx.x)];
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
-    int* temp;
-    cudaMalloc((void**)&temp, sizeof(int) * clients * (periods / BLOCK_SIZE) / 2);
-    /**
-     * If periods is less than 2048, we can use kernel that calculates everything in one block
-     * Otherwise we need to synchronize multiple blocks and that creates a lot of overhead
-     */
-    if (periods <= 2048) {
-        int memory = sizeof(int) * periods;
-        sumScanSingleBlock<<<clients, periods / 2, memory>>>(changes, account, clients);
-    } else {
-        int memory = sizeof(int) * (BLOCK_SIZE * 4);
-        dim3 grid(clients, (periods / BLOCK_SIZE) / 2);
-        sumScanMultiBlock<<<grid, BLOCK_SIZE, memory>>>(changes, account, clients, temp);
-    }
-
-    {
-        int memory = sizeof(int) * clients;
-        sumReduceSingleBlock<<<periods, clients, memory>>>(account, sum, clients, periods);
-    }
-    // dim3 grid(clients, (periods / BLOCK_SIZE) / 2);
-    // dim3 block(BLOCK_SIZE);
-    // kernel2<<<grid, block, sizeof(int) * (BLOCK_SIZE * 4)>>>(changes, account, sum, clients,
-    // temp); kernel3<<<grid, BLOCK_SIZE * 2>>>(changes, account, sum, clients, temp);
-    // dim3 sumblocks(periods, (clients / BLOCK_SIZE) / 2);
-    // sumkernel<<<sumblocks, BLOCK_SIZE, sizeof(int) * (BLOCK_SIZE * 2)>>>(account, sum, clients,
-    //                                                                      periods, temp);
-    // int threads = (clients / BLOCK_SIZE) / 4;
-    // // printf("Threads: %d\n", threads);
-    // sumkernel2<<<periods, threads, sizeof(int) * threads * 2>>>(account, sum, clients, periods,
-    //                                                             temp);
-    // kernel<<<clients, 1>>>(changes, account, sum, clients, periods);
+    // 2 (2 values per thread) * 2 (each value is duplicated twice)
+    int memory = sizeof(int) * COLS * ROWS * 2 * 4;
+    dim3 grid(COLS, ROWS / 2);  // Each thread processes two rows of client
+    dim3 block(COLS, ROWS);
+    sumScanMultiBlock<<<grid, block, memory>>>(changes, account, clients, periods);
+    kernel2<<<grid, block>>>(account, clients, periods);
 }
