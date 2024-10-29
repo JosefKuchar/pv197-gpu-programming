@@ -18,7 +18,7 @@ int main(int argc, char **argv){
 
     // parse command line
     int device = 0;
-    if (argc == 2) 
+    if (argc == 2)
         device = atoi(argv[1]);
     if (cudaSetDevice(device) != cudaSuccess){
         fprintf(stderr, "Cannot set CUDA device!\n");
@@ -42,10 +42,10 @@ int main(int argc, char **argv){
 
     for (int i = 0; i < CLIENTS*PERIODS; i++)
         changes[i] = int(100.0f*(float)rand() / float(RAND_MAX));
- 
+
     // allocate and set device memory
     if (cudaMalloc((void**)&dchanges, CLIENTS*PERIODS*sizeof(dchanges[0])) != cudaSuccess
-    || cudaMalloc((void**)&daccount, CLIENTS*PERIODS*sizeof(daccount[0])) != cudaSuccess 
+    || cudaMalloc((void**)&daccount, CLIENTS*PERIODS*sizeof(daccount[0])) != cudaSuccess
     || cudaMalloc((void**)&dsum, PERIODS*sizeof(dsum[0])) != cudaSuccess){
         fprintf(stderr, "Device memory allocation error!\n");
         goto cleanup;
@@ -68,7 +68,7 @@ int main(int argc, char **argv){
     // solve on GPU
     printf("Solving on GPU...\n");
     cudaEventRecord(start, 0);
-    //for(int i =0; i < 100; i++) 
+    //for(int i =0; i < 100; i++)
         solveGPU(dchanges, daccount, dsum, CLIENTS, PERIODS);
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
@@ -80,7 +80,7 @@ int main(int argc, char **argv){
     cudaMemcpy(account_gpu, daccount, CLIENTS*PERIODS*sizeof(daccount[0]), cudaMemcpyDeviceToHost);
     for (int j = 0; j < PERIODS; j++)
         for (int i = 0; i < CLIENTS; i++)
-            if (account[j*CLIENTS+i] != account_gpu[j*CLIENTS+i]) { 
+            if (account[j*CLIENTS+i] != account_gpu[j*CLIENTS+i]) {
                 fprintf(stderr, "Account data mismatch at index %i, %i: %i should be %i :-(\n", i, j, account_gpu[j*CLIENTS+i], account[j*CLIENTS+i]);
                 goto cleanup;
             }
