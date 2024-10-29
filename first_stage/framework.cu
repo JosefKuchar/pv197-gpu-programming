@@ -52,7 +52,7 @@ int main(int argc, char **argv){
     }
     cudaMemcpy(dchanges, changes, CLIENTS*PERIODS*sizeof(dchanges[0]), cudaMemcpyHostToDevice);
     cudaMemset(daccount, 0, CLIENTS*PERIODS*sizeof(daccount[0]));
-    cudaMemset(dsum, 0, CLIENTS*PERIODS*sizeof(dsum[0]));
+    cudaMemset(dsum, 0, PERIODS*sizeof(dsum[0]));
 
     // solve on CPU
     printf("Solving on CPU...\n");
