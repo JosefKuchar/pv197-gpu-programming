@@ -5,3 +5,7 @@
 *.cubin
 *.fatbin
 bench
+*.exe
+*.exp
+*.lib
+output*

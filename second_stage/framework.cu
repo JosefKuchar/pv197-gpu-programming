@@ -67,13 +67,12 @@ int main(int argc, char** argv) {
     // solve on GPU
     printf("Solving on GPU...\n");
     cudaEventRecord(start, 0);
-    for (int i = 0; i < 100; i++)
-        solveGPU(dchanges, daccount, dsum, CLIENTS, PERIODS);
+    // for (int i = 0; i < 100; i++)
+    solveGPU(dchanges, daccount, dsum, CLIENTS, PERIODS);
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&time, start, stop);
-    printf("GPU performance: %f megavalues/s\n",
-           100 * float(CLIENTS) * float(PERIODS) / time / 1e3f);
+    printf("GPU performance: %f megavalues/s\n", float(CLIENTS) * float(PERIODS) / time / 1e3f);
 
     // check GPU results
     cudaMemcpy(account_gpu, daccount, CLIENTS * PERIODS * sizeof(daccount[0]),

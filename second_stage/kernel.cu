@@ -11,36 +11,47 @@
 // ROWS = 16 => 5 iterations
 // log2(ROWS) + 1 iterations for reduction phase
 
-#define COLS 32
-#define ROWS 32
+#define COLS 128
+#define ROWS 256
 // __device__ int blockSumStorage[8192 * (8192 / ROWS) / 2];
 __global__ void sumScanMultiBlock(int* changes, int* account, int clients, int periods) {
-    __shared__ volatile int scan[ROWS * COLS];
-    int localCol = threadIdx.y;
-    int localRow = threadIdx.x;
-    int localColDim = blockDim.y;
-    int localRowDim = blockDim.x;
-    int gridCol = blockIdx.x;
-    int gridRow = blockIdx.y;
-    int gridRowDim = gridDim.y;
+    // __shared__ volatile int scan[ROWS * COLS];
+    // int localRow = threadIdx.x;
+    // int localColDim = blockDim.y;
+    // int localRowDim = blockDim.x;
+    // int gridCol = blockIdx.x;
+    // int gridRow = blockIdx.y;
+    // int gridRowDim = gridDim.y;
 
-    int blockOffset = localCol * ROWS;
-    int globalId = gridCol * localColDim + localCol + clients * (gridRow * localRowDim + localRow);
+    // for (int localCol = 0; localCol < COLS; localCol++) {
+    //     int blockOffset = localCol * ROWS;
+    //     int globalId =
+    //         gridCol * localColDim + localCol + clients * (gridRow * localRowDim + localRow);
 
-    int x = changes[globalId];
-    scan[localRow + blockOffset] = x;
-    int sum = x;
+    //     int x = changes[globalId];
+    //     scan[localRow + blockOffset] = x;
+    //     int sum = x;
 
-#pragma unroll
-    for (int i = 0; i < 5; ++i) {
-        int offset = 1 << i;
-        if (localRow >= offset)
-            sum += scan[localRow + blockOffset - offset];
-        scan[localRow + blockOffset] = sum;
+    //     account[globalId] = sum;
+    // }
+
+    int index = blockIdx.x * blockDim.x + threadIdx.x + clients * blockIdx.y * ROWS;
+    int val = 0;
+    for (int i = 0; i < ROWS; i++) {
+        val += changes[index];
+        account[index] = val;
+        index += clients;
     }
 
+    // #pragma unroll
+    //     for (int i = 0; i < 5; ++i) {
+    //         int offset = 1 << i;
+    //         if (localRow >= offset)
+    //             sum += scan[localRow + blockOffset - offset];
+    //         scan[localRow + blockOffset] = sum;
+    //     }
+
     // Write results back to global memory
-    account[globalId] = sum;
 }
 
 // __global__ void sumScan2(int rowDim) {
@@ -106,8 +117,7 @@ __global__ void sumScanMultiBlock(int* changes, int* account, int clients, int p
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
     dim3 grid(clients / COLS, periods / ROWS);
-    dim3 block(ROWS, COLS);
-    sumScanMultiBlock<<<grid, block>>>(changes, account, clients, periods);
+    sumScanMultiBlock<<<grid, COLS>>>(changes, account, clients, periods);
     // sumScan2<<<clients, grid.y / 2, sizeof(int) * grid.y>>>(grid.y);
     // kernel2<<<grid, block>>>(account, clients, periods);
 }
