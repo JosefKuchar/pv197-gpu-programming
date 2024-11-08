@@ -55,13 +55,14 @@ __global__ void secondStage() {
     temp[threadIdx.x + blockIdx.x * blockDim.x] = sum - x;
 }
 
-__global__ void thirdStage(int* account, int clients) {
+__global__ void thirdStage(int* account, int* sum, int clients) {
     int index = blockIdx.x * blockDim.x + threadIdx.x + clients * blockIdx.y * ROWS;
     int add = temp[blockIdx.y + (blockIdx.x * blockDim.x + threadIdx.x) * 32];
 
 #pragma unroll
     for (int i = 0; i < ROWS; i++) {
         account[index] += add;
+        atomicAdd(&sum[i + blockIdx.y * ROWS], account[index]);
         index += clients;
     }
 }
@@ -70,7 +71,7 @@ void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
     dim3 grid(clients / COLS, periods / ROWS);
     firstStage<<<grid, COLS>>>(changes, account, clients, periods);
     secondStage<<<clients, 32>>>();
-    thirdStage<<<grid, COLS>>>(account, clients);
+    thirdStage<<<grid, COLS>>>(account, sum, clients);
     // sumScan2<<<clients, grid.y / 2, sizeof(int) * grid.y>>>(grid.y);
     // kernel2<<<grid, block>>>(account, clients, periods);
 
