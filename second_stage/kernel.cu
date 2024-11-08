@@ -3,19 +3,20 @@
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 // https://web.archive.org/web/20110924131401/http://www.moderngpu.com/intro/scan.html
 
-#define COLS 32
+#define COLS 16
 #define ROWS 32
 // __device__ int temp[32 * 8192];
 __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
     __shared__ int temp[COLS * ROWS];
-    int tx = threadIdx.x % COLS;
-    int ty = threadIdx.x / COLS;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
     int index = blockIdx.x * COLS + tx + clients * (ty) * 256;
     int val = 0;
 #pragma unroll
+    int temp_account[256];
     for (int i = 0; i < 256; i++) {
         val += changes[index];
-        account[index] = val;
+        temp_account[i] = val;
         index += clients;
     }
 
@@ -36,17 +37,22 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
     __syncthreads();
     // Store back to global memory
     index = blockIdx.x * COLS + tx + clients * (ty) * 256;
-// printf("tx: %d, ty: %d, i: %d, v: %d\n", tx, ty, tx + ty * COLS, temp[tx + ty * COLS]);
+    // printf("tx: %d, ty: %d, i: %d, v: %d\n", tx, ty, tx + ty * COLS, temp[tx + ty * COLS]);
+    int t = temp[tx + ty * COLS];
 #pragma unroll
     for (int i = 0; i < 256; i++) {
-        account[index] += temp[tx + ty * COLS];
-        atomicAdd(&sum[i + ty * 256], account[index]);
+        temp_account[i] += t;
+        account[index] = temp_account[i];
+        atomicAdd(&sum[i + ty * 256], temp_account[index]);
         index += clients;
     }
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
-    firstStage<<<clients / COLS, COLS * ROWS>>>(changes, account, sum, clients, periods);
+    cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity, 4);
+
+    dim3 block(COLS, ROWS);
+    firstStage<<<clients / COLS, block>>>(changes, account, sum, clients, periods);
 
     // Output memory errors
     cudaError_t error = cudaGetLastError();
