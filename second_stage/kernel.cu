@@ -3,7 +3,7 @@
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 // https://web.archive.org/web/20110924131401/http://www.moderngpu.com/intro/scan.html
 
-#define COLS 16
+#define COLS 32
 #define ROWS 32
 // __device__ int temp[32 * 8192];
 __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
@@ -36,10 +36,11 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
     __syncthreads();
     // Store back to global memory
     index = blockIdx.x * COLS + tx + clients * (ty) * 256;
-    // printf("tx: %d, ty: %d, i: %d, v: %d\n", tx, ty, tx + ty * COLS, temp[tx + ty * COLS]);
+// printf("tx: %d, ty: %d, i: %d, v: %d\n", tx, ty, tx + ty * COLS, temp[tx + ty * COLS]);
 #pragma unroll
     for (int i = 0; i < 256; i++) {
         account[index] += temp[tx + ty * COLS];
+        atomicAdd(&sum[i + ty * 256], account[index]);
         index += clients;
     }
 }
