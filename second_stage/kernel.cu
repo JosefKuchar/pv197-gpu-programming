@@ -1,9 +1,18 @@
 // TODO: Use advanced techniques from
 // https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
+// https://web.archive.org/web/20110924131401/http://www.moderngpu.com/intro/scan.html
 
-#define COLS 64
-#define ROWS 8
+#define NUM_BANKS 16
+#define LOG_NUM_BANKS 4
+#define CONFLICT_FREE_OFFSET(n) ((n) >> NUM_BANKS + (n) >> (2 * LOG_NUM_BANKS))
+
+// ROWS = 32 => 6 iterations
+// ROWS = 16 => 5 iterations
+// log2(ROWS) + 1 iterations for reduction phase
+
+#define COLS 4
+#define ROWS 32
 __device__ int blockSumStorage[8192 * (8192 / ROWS) / 2];
 __global__ void sumScanMultiBlock(int* changes, int* account, int clients, int periods) {
     extern __shared__ int shared[];
@@ -17,49 +26,48 @@ __global__ void sumScanMultiBlock(int* changes, int* account, int clients, int p
 
     int p = ROWS * 2;
     // Offset in shared memory for original values
-    int originalOffset = ROWS * COLS * 4;
+    int originalOffset = ROWS * COLS * 2;
     // Sum offset for reduction sum for shared memory
-    int sumOffset = ROWS * COLS * 2;
+    // int sumOffset = ROWS * COLS * 2;
     // "General" block offset for shared memory
     int blockOffset = localCol * ROWS * 2;
     // Indices for shared memory
-    int shared1Id = blockOffset + localRow * 2;
-    int shared2Id = blockOffset + localRow * 2 + 1;
+    int shared1Id = blockOffset + localRow;
+    int shared2Id = blockOffset + localRow + ROWS;
     // Indices for global memory
     int global1Id =
-        gridCol * localColDim + localCol + clients * (gridRow * localRowDim * 2 + localRow * 2);
+        gridCol * localColDim + localCol + clients * (gridRow * localRowDim * 2 + localRow);
     int global2Id =
-        gridCol * localColDim + localCol + clients * (gridRow * localRowDim * 2 + localRow * 2 + 1);
+        gridCol * localColDim + localCol + clients * (gridRow * localRowDim * 2 + localRow + ROWS);
     // Load data into shared memory
     shared[shared1Id] = changes[global1Id];
     shared[shared2Id] = changes[global2Id];
     // Duplicate values for reduction sum
-    shared[shared1Id + sumOffset] = shared[shared1Id];
-    shared[shared2Id + sumOffset] = shared[shared2Id];
+    // shared[shared1Id + sumOffset] = shared[shared1Id];
+    // shared[shared2Id + sumOffset] = shared[shared2Id];
     // Save original values for post-reduction phase
     shared[shared1Id + originalOffset] = shared[shared1Id];
     shared[shared2Id + originalOffset] = shared[shared2Id];
 
-    // Reduction sum
-#pragma unroll
-    for (int i = 1; i < ROWS * 2; i *= 2) {
-        if (localRow % i == 0) {
-            int offset = blockOffset + sumOffset;
-            shared[offset + localRow * 2] += shared[offset + localRow * 2 + i];
-        }
-        __syncthreads();
-    }
+    // // Reduction sum
+    // for (int i = 1; i < ROWS * 2; i *= 2) {
+    //     if (localRow % i == 0) {
+    //         int offset = blockOffset + sumOffset;
+    //         shared[offset + localRow * 2] += shared[offset + localRow * 2 + i];
+    //     }
+    //     __syncthreads();
+    // }
 
-    if (localRow == 0) {
-        blockSumStorage[gridRow + gridRowDim * (gridCol * localColDim + localCol)] =
-            shared[blockOffset + sumOffset];
-    }
+    // if (localRow == 0) {
+    //     blockSumStorage[gridRow + gridRowDim * (gridCol * localColDim + localCol)] =
+    //         shared[blockOffset + sumOffset];
+    // }
 
     // Reduction phase
     int offset = 1;
-#pragma unroll
+#pragma unroll 6
     for (int d = p >> 1; d > 0; d >>= 1) {
-        __syncthreads();
+        // __syncthreads();
         if (localRow < d) {
             int ai = offset * (2 * localRow + 1) - 1;
             int bi = offset * (2 * localRow + 2) - 1;
@@ -74,10 +82,10 @@ __global__ void sumScanMultiBlock(int* changes, int* account, int clients, int p
     }
 
     // Post-reduction phase
-#pragma unroll
+#pragma unroll 6
     for (int d = 1; d < p; d *= 2) {
         offset >>= 1;
-        __syncthreads();
+        // __syncthreads();
         if (localRow < d) {
             int ai = offset * (2 * localRow + 1) - 1;
             int bi = offset * (2 * localRow + 2) - 1;
@@ -87,7 +95,7 @@ __global__ void sumScanMultiBlock(int* changes, int* account, int clients, int p
         }
     }
 
-    __syncthreads();
+    // __syncthreads();
     // Add original values to the results, because algorithm produces prefix sum without them
     shared[shared1Id] += shared[shared1Id + originalOffset];
     shared[shared2Id] += shared[shared2Id + originalOffset];
@@ -159,11 +167,11 @@ __global__ void sumScan2(int rowDim) {
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
     // 2 (2 values per thread) * 2 (each value is duplicated twice)
-    int memory = sizeof(int) * COLS * ROWS * 2 * 3;
+    int memory = sizeof(int) * COLS * ROWS * 2 * 2;
     dim3 grid(clients / COLS,
               (periods / ROWS) / 2);  // Each thread processes two rows of client
     dim3 block(ROWS, COLS);
     sumScanMultiBlock<<<grid, block, memory>>>(changes, account, clients, periods);
-    sumScan2<<<clients, grid.y / 2, sizeof(int) * grid.y>>>(grid.y);
+    // sumScan2<<<clients, grid.y / 2, sizeof(int) * grid.y>>>(grid.y);
     // kernel2<<<grid, block>>>(account, clients, periods);
 }
