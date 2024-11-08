@@ -8,7 +8,7 @@
 // __device__ int temp[32 * 8192];
 __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
     __shared__ int temp[COLS * ROWS];
-    int index = blockIdx.x * blockDim.x + threadIdx.x + clients * (threadIdx.x % COLS) * 256;
+    int index = blockIdx.x * blockDim.x + threadIdx.x % COLS + clients * (threadIdx.x / COLS) * 256;
     int val = 0;
 #pragma unroll
     for (int i = 0; i < 256; i++) {
