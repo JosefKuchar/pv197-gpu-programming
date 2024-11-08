@@ -8,7 +8,7 @@
 // __device__ int temp[32 * 8192];
 __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
     __shared__ int temp[COLS * ROWS];
-    int index = blockIdx.x * blockDim.x + threadIdx.x + clients * threadIdx.y * 256;
+    int index = blockIdx.x * blockDim.x + threadIdx.x + clients * (threadIdx.x % COLS) * 256;
     int val = 0;
 #pragma unroll
     for (int i = 0; i < 256; i++) {
@@ -41,8 +41,7 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
-    dim3 block(COLS, ROWS);
-    firstStage<<<clients / COLS, block>>>(changes, account, sum, clients, periods);
+    firstStage<<<clients / COLS, COLS * ROWS>>>(changes, account, sum, clients, periods);
 
     // Output memory errors
     cudaError_t error = cudaGetLastError();
