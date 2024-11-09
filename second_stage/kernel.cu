@@ -12,8 +12,8 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
     int ty = threadIdx.y;
     int index = blockIdx.x * COLS + tx + clients * (ty) * 256;
     int val = 0;
-#pragma unroll
     int temp_account[256];
+#pragma unroll 4
     for (int i = 0; i < 256; i++) {
         val += changes[index];
         temp_account[i] = val;
@@ -39,11 +39,11 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
     index = blockIdx.x * COLS + tx + clients * (ty) * 256;
     // printf("tx: %d, ty: %d, i: %d, v: %d\n", tx, ty, tx + ty * COLS, temp[tx + ty * COLS]);
     int t = temp[tx + ty * COLS];
-#pragma unroll
+#pragma unroll 4
     for (int i = 0; i < 256; i++) {
         temp_account[i] += t;
         account[index] = temp_account[i];
-        atomicAdd(&sum[i + ty * 256], temp_account[index]);
+        // atomicAdd(&sum[i + ty * 256], temp_account[i]);
         index += clients;
     }
 }
