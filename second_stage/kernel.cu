@@ -54,9 +54,11 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
             prev = temp[sharedIndex + 3];
         }
         account[index] = temp[sharedIndex];
-        temp[sharedIndex] += temp[sharedIndex + 4 * 4];
-        temp[sharedIndex] += temp[sharedIndex + 4 * 2];
-        temp[sharedIndex] += temp[sharedIndex + 4];
+        if (tx < 4) {
+            temp[sharedIndex] += temp[sharedIndex + 4 * 4];
+            temp[sharedIndex] += temp[sharedIndex + 4 * 2];
+            temp[sharedIndex] += temp[sharedIndex + 4];
+        }
         if (tx == 0) {
             atomicAdd(&sum[4 * i + ty], temp[sharedIndex]);
         }
