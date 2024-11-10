@@ -19,7 +19,7 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
         }
 #pragma unroll
         for (int k = 0; k < P; k++) {
-            int idx = threadIdx.x + k * BLOCK_SIZE;
+            int idx = threadIdx.x;
             shared[idx] = cache[k];
             if (threadIdx.x < 16) {
                 shared[idx] += shared[idx + 16];
