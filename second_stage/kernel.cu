@@ -3,59 +3,26 @@
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 // https://web.archive.org/web/20110924131401/http://www.moderngpu.com/intro/scan.html
 
-#define COLS 16
-#define ROWS 32
-// __device__ int temp[32 * 8192];
+#define BLOCK_COLS 32
+#define COLS 8
+#define ROWS 4
+
 __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
-    __shared__ int temp[COLS * ROWS];
-    int tx = threadIdx.x;
-    int ty = threadIdx.y;
-    int index = blockIdx.x * COLS + tx + clients * (ty) * 256;
-    int val = 0;
-    // int temp_account[256];
-#pragma unroll 4
-    for (int i = 0; i < 256; i++) {
-        val += changes[index];
-        // temp_account[i] = val;
-        // account[index] = val;
-        index += clients;
-    }
+    int tx = threadIdx.x % COLS;
+    int ty = (threadIdx.x / COLS) % ROWS;
+    int xx = threadIdx.x / (COLS * ROWS);
 
-    // Store to temp
-    temp[tx + ty * COLS] = val;
-    __syncthreads();
+    int index = tx + xx * COLS + blockIdx.x * BLOCK_COLS + clients * ty;
 
-    // Exclusive scan in shared memory
-    // TODO: Do with multiple threads
-    if (ty == 0) {
-        int sum = 0;
-        for (int i = 0; i < 32; i++) {
-            int current = temp[tx + i * COLS];
-            temp[tx + i * COLS] = sum;
-            sum += current;
-        }
-    }
-    __syncthreads();
-    // Store back to global memory
-    index = blockIdx.x * COLS + tx + clients * (ty) * 256;
-    // printf("tx: %d, ty: %d, i: %d, v: %d\n", tx, ty, tx + ty * COLS, temp[tx + ty * COLS]);
-    int t = temp[tx + ty * COLS];
-#pragma unroll 4
-    val = 0;
-    for (int i = 0; i < 256; i++) {
-        val += changes[index];
-        int new_val = val + t;
-        account[index] = new_val;
-        // atomicAdd(&sum[i + ty * 256], new_val);
-        index += clients;
+    for (int i = 0; i < 2048; i++) {
+        account[index] = changes[index];
+        index += clients * ROWS;
     }
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
-    cudaDeviceSetLimit(cudaLimitMaxL2FetchGranularity, 4);
-
-    dim3 block(COLS, ROWS);
-    firstStage<<<clients / COLS, block>>>(changes, account, sum, clients, periods);
+    firstStage<<<clients / BLOCK_COLS, BLOCK_COLS * ROWS>>>(changes, account, sum, clients,
+                                                            periods);
 
     // Output memory errors
     cudaError_t error = cudaGetLastError();
