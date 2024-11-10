@@ -4,7 +4,7 @@
 // https://web.archive.org/web/20110924131401/http://www.moderngpu.com/intro/scan.html
 
 #define COLS 16
-#define ROWS 32
+#define ROWS 16
 
 // __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
 //     __shared__ volatile int temp[BLOCK_COLS * ROWS * 2];
@@ -37,17 +37,12 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
     // int ty = (threadIdx.x / COLS) % ROWS;
     // int xx = threadIdx.x / (COLS * ROWS);
 
-    int index = threadIdx.x + blockIdx.x * COLS + clients * threadIdx.y;
-    int si = threadIdx.x + threadIdx.y * COLS;
-    for (int i = 0; i < 8192 / ROWS; i++) {
-        shared[si] = changes[index];
-        __syncthreads();
-        account[index] = shared[si];
-        index += clients * ROWS;
-    }
+    int index = threadIdx.x + blockIdx.x * COLS + clients * (threadIdx.y + blockIdx.y * ROWS);
+    account[index] = changes[index];
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
+    dim3 grid(clients / COLS, periods / ROWS);
     dim3 block(COLS, ROWS);
     kernel<<<clients / COLS, block>>>(changes, account, sum, clients, periods);
 
