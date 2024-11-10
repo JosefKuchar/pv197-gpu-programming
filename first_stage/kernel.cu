@@ -1,4 +1,4 @@
-const int BLOCK_SIZE = 64;
+const int BLOCK_SIZE = 32;
 
 #define P 8
 
@@ -15,8 +15,18 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
 #pragma unroll
         for (int k = 0; k < P; k++) {
             acc += cache[k];
-            atomicAdd(&sum[j * P + k], acc);
             cache[k] = acc;
+            shared[threadIdx.x] = acc;
+            if (threadIdx.x < 16) {
+                shared[threadIdx.x] += shared[threadIdx.x + 16];
+                shared[threadIdx.x] += shared[threadIdx.x + 8];
+                shared[threadIdx.x] += shared[threadIdx.x + 4];
+                shared[threadIdx.x] += shared[threadIdx.x + 2];
+                shared[threadIdx.x] += shared[threadIdx.x + 1];
+            }
+            if (threadIdx.x == 0) {
+                atomicAdd(&sum[j * P + k], shared[0]);
+            }
         }
 #pragma unroll
         for (int k = 0; k < P; k++) {
