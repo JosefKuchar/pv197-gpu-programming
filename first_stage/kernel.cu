@@ -8,14 +8,17 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
     int acc = 0;
     int cache[P];
     for (int j = 0; j < periods / P; j++) {
+#pragma unroll
         for (int k = 0; k < P; k++) {
             cache[k] = changes[index + k * clients];
         }
+#pragma unroll
         for (int k = 0; k < P; k++) {
             acc += cache[k];
             atomicAdd(&sum[j * P + k], acc);
             cache[k] = acc;
         }
+#pragma unroll
         for (int k = 0; k < P; k++) {
             account[index + k * clients] = cache[k];
         }
