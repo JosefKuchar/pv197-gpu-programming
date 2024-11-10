@@ -30,6 +30,7 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
             prev = temp[sharedIndex + 3];
         }
         account[index] = temp[sharedIndex];
+        atomicAdd(&sum[4 * i + ty], temp[sharedIndex]);
         index += clients * ROWS;
     }
 }
