@@ -3,8 +3,8 @@
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 // https://web.archive.org/web/20110924131401/http://www.moderngpu.com/intro/scan.html
 
-#define COLS 16
-#define ROWS 16
+#define COLS 32
+#define ROWS 32
 
 // __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
 //     __shared__ volatile int temp[BLOCK_COLS * ROWS * 2];
@@ -30,8 +30,14 @@
 //     }
 // }
 
-__global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
+__global__ void kernel(int* changes,
+                       int* account,
+                       int* sum,
+                       int clients,
+                       int periods,
+                       volatile int* sync) {
     __shared__ volatile int shared[COLS * ROWS];
+    __shared__ int blockId;  // Block if for sync
 
     // int tx = threadIdx.x % COLS;
     // int ty = (threadIdx.x / COLS) % ROWS;
@@ -42,9 +48,12 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
+    int* sync;
+    cudaMalloc(&sync, 8192 / COLS * sizeof(int));
+    cudaMemset(sync, 0, 8192 / COLS * sizeof(int));
     dim3 grid(clients / COLS, periods / ROWS);
     dim3 block(COLS, ROWS);
-    kernel<<<grid, block>>>(changes, account, sum, clients, periods);
+    kernel<<<grid, block>>>(changes, account, sum, clients, periods, sync);
 
     // Output memory errors
     cudaError_t error = cudaGetLastError();
