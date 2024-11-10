@@ -17,12 +17,17 @@ __global__ void firstStage(int* changes, int* account, int* sum, int clients, in
     int index = tx + xx * COLS + blockIdx.x * BLOCK_COLS + clients * ty;
 
     int sharedIndex = ty + tx * ROWS + xx * (ROWS * COLS);
+    int prev = 0;
     for (int i = 0; i < 2048; i++) {
-        temp[sharedIndex] = changes[index];
-
-        int v = temp[sharedIndex];
+        temp[sharedIndex] = changes[index] + prev;
         if (ty < 3) {
-            temp[sharedIndex + 1] += v;
+            temp[sharedIndex + 1] += temp[sharedIndex];
+        }
+        if (ty < 2) {
+            temp[sharedIndex + 2] += temp[sharedIndex];
+        }
+        if (ty == 0) {
+            prev = temp[sharedIndex + 3];
         }
         account[index] = temp[sharedIndex];
         index += clients * ROWS;
