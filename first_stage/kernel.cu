@@ -3,7 +3,7 @@ const int BLOCK_SIZE = 32;
 #define P 8
 
 __global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
-    __shared__ volatile int shared[BLOCK_SIZE * P];
+    __shared__ volatile int shared[BLOCK_SIZE];
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int acc = 0;
     int cache[P];
@@ -19,11 +19,8 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
         }
 #pragma unroll
         for (int k = 0; k < P; k++) {
-            shared[threadIdx.x + k * BLOCK_SIZE] = cache[k];
-        }
-#pragma unroll
-        for (int k = 0; k < P; k++) {
             int idx = threadIdx.x + k * BLOCK_SIZE;
+            shared[idx] = cache[k];
             if (threadIdx.x < 16) {
                 shared[idx] += shared[idx + 16];
                 shared[idx] += shared[idx + 8];
