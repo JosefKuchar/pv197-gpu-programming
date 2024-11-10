@@ -3,8 +3,8 @@
 // https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf
 // https://web.archive.org/web/20110924131401/http://www.moderngpu.com/intro/scan.html
 
-#define COLS 8
-#define ROWS 128
+#define COLS 16
+#define ROWS 32
 
 // __global__ void firstStage(int* changes, int* account, int* sum, int clients, int periods) {
 //     __shared__ volatile int temp[BLOCK_COLS * ROWS * 2];
