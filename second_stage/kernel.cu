@@ -38,13 +38,13 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
     // int xx = threadIdx.x / (COLS * ROWS);
 
     int index = threadIdx.x + blockIdx.x * COLS + clients * (threadIdx.y + blockIdx.y * ROWS);
-    account[index] = changes[index];
+    account[index] = changes[index] * 2;
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
     dim3 grid(clients / COLS, periods / ROWS);
     dim3 block(COLS, ROWS);
-    kernel<<<clients / COLS, block>>>(changes, account, sum, clients, periods);
+    kernel<<<grid, block>>>(changes, account, sum, clients, periods);
 
     // Output memory errors
     cudaError_t error = cudaGetLastError();
