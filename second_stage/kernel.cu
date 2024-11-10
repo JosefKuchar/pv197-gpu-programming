@@ -37,14 +37,22 @@ __global__ void kernel(int* changes,
                        int periods,
                        volatile int* sync) {
     __shared__ volatile int shared[COLS * ROWS];
-    __shared__ int blockId;  // Block if for sync
+    // __shared__ int blockId;  // Block if for sync
 
     // int tx = threadIdx.x % COLS;
     // int ty = (threadIdx.x / COLS) % ROWS;
     // int xx = threadIdx.x / (COLS * ROWS);
 
     int index = threadIdx.x + blockIdx.x * COLS + clients * (threadIdx.y + blockIdx.y * ROWS);
-    account[index] = changes[index] * 2;
+    int test = changes[index] * 2;
+
+    atomicAdd((int*)&sync[blockIdx.x], 1);
+
+    // Wait for other blocks in the same column to finish
+    while (sync[blockIdx.x] < 8192 / COLS)
+        ;
+
+    account[index] = test;
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
