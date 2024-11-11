@@ -1,46 +1,41 @@
-const int BLOCK_SIZE = 32;
-
+#define BLOCK_SIZE 64
 #define P 16
 
-__global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
-    __shared__ volatile int shared[BLOCK_SIZE];
+__global__ void kernel(int* changes, int* account, int* sum) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
     int acc = 0;
     int cache[P];
-    for (int j = 0; j < periods / P; j++) {
+    for (int j = 0; j < 8192 / P; j++) {
+        int offset = index;
 #pragma unroll
         for (int k = 0; k < P; k++) {
-            cache[k] = changes[index + k * clients];
+            cache[k] = changes[offset];
+            offset += 8192;
         }
 #pragma unroll
         for (int k = 0; k < P; k++) {
             acc += cache[k];
             cache[k] = acc;
-            atomicAdd(&sum[j * P + k], cache[k]);
+            int warp_sum = acc;
+            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 16);
+            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 8);
+            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 4);
+            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
+            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
+            if (threadIdx.x % 32 == 0) {
+                atomicAdd(&sum[j * P + k], warp_sum);
+            }
         }
-// #pragma unroll
-//         for (int k = 0; k < P; k++) {
-//             int idx = threadIdx.x;
-//             shared[idx] = cache[k];
-//             if (threadIdx.x < 16) {
-//                 shared[idx] += shared[idx + 16];
-//                 shared[idx] += shared[idx + 8];
-//                 shared[idx] += shared[idx + 4];
-//                 shared[idx] += shared[idx + 2];
-//                 shared[idx] += shared[idx + 1];
-//             }
-//             if (threadIdx.x == 0) {
-//                 atomicAdd(&sum[j * P + k], shared[idx]);
-//             }
-//         }
+        offset = index;
 #pragma unroll
         for (int k = 0; k < P; k++) {
-            account[index + k * clients] = cache[k];
+            account[offset] = cache[k];
+            offset += 8192;
         }
-        index += P * clients;
+        index += P * 8192;
     }
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
-    kernel<<<clients / BLOCK_SIZE, BLOCK_SIZE>>>(changes, account, sum, clients, periods);
+    kernel<<<clients / BLOCK_SIZE, BLOCK_SIZE>>>(changes, account, sum);
 }
