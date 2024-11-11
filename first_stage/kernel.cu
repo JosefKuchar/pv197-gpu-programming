@@ -1,5 +1,5 @@
-#define BLOCK_SIZE 64
-#define P 8
+#define BLOCK_SIZE 128
+#define P 16
 
 __global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
     int index = blockIdx.x * blockDim.x + threadIdx.x;
