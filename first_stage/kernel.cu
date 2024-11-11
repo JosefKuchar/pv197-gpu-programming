@@ -15,7 +15,6 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
         for (int k = 0; k < P; k++) {
             acc += cache[k];
             cache[k] = acc;
-            // atomicAdd(&sum[j * P + k], acc);
         }
 #pragma unroll
         for (int k = 0; k < P; k++) {
