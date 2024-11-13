@@ -37,18 +37,13 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
 #pragma unroll
         for (int k = 0; k < PRELOAD_COUNT; k++) {
             acc += cache[k];
-            cache[k] = acc;
-        }
-
-        // Reduction sum using warp shuffle
-#pragma unroll
-        for (int k = 0; k < PRELOAD_COUNT; k++) {
-            int warp_sum = cache[k];
+            int warp_sum = acc;
             warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 16);
             warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 8);
             warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 4);
             warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
             warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
+            cache[k] = acc;
             sums[k] = warp_sum;
         }
 
