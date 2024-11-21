@@ -8,11 +8,11 @@
  */
 
 // Number of columns in block
-#define BLOCK_SIZE 128
+#define BLOCK_SIZE 64
 // Number of rows to preload in each iteration
 #define PRELOAD_COUNT 16
 
-#define ROWS 4
+#define ROWS 8
 
 /**
  * @brief General kernel
@@ -30,7 +30,6 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
 
     int acc = 0;
     int cache[PRELOAD_COUNT];
-    unsigned sums[PRELOAD_COUNT];
     for (int j = 0; j < periods / (PRELOAD_COUNT * ROWS); j++) {
         // Load PRELOAD_COUNT rows from global memory
 #pragma unroll
@@ -49,7 +48,7 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
             warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
             warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
             cache[k] = acc;
-            sums[k] = warp_sum;
+            // sums[k] = warp_sum;
         }
 
         // Store PRELOAD_COUNT rows to global memory
@@ -58,13 +57,13 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
             account[index + k * clients] = cache[k];
         }
 
-        // First thread in warp stores the reduction sum
-        if (threadIdx.x % 32 == 0) {
-#pragma unroll
-            for (int k = 0; k < PRELOAD_COUNT; k++) {
-                atomicAdd(&sum[j * PRELOAD_COUNT + k], sums[k]);
-            }
-        }
+        //         // First thread in warp stores the reduction sum
+        //         if (threadIdx.x % 32 == 0) {
+        // #pragma unroll
+        //             for (int k = 0; k < PRELOAD_COUNT; k++) {
+        //                 atomicAdd(&sum[j * PRELOAD_COUNT + k], sums[k]);
+        //             }
+        //         }
         index += ROWS * PRELOAD_COUNT * clients;
     }
 }
