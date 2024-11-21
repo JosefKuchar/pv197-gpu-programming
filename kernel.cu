@@ -8,7 +8,7 @@
  */
 
 // Number of columns in block
-#define BLOCK_SIZE 32
+#define BLOCK_SIZE 128
 // Number of rows to preload in each iteration
 #define PRELOAD_COUNT 16
 
@@ -26,7 +26,8 @@
 __global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
     __shared__ volatile int shared[BLOCK_SIZE * ROWS];
 
-    int index = blockIdx.x * blockDim.x + threadIdx.x + blockIdx.y * clients * PRELOAD_COUNT;
+    int index = blockIdx.x * blockDim.x + threadIdx.x + threadIdx.y * clients * PRELOAD_COUNT;
+
     int acc = 0;
     int cache[PRELOAD_COUNT];
     unsigned sums[PRELOAD_COUNT];
