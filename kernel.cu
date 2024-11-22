@@ -30,8 +30,9 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
     // Producer warps
     if (threadIdx.y == 0) {
         bool offset_flag = false;
-        int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
         for (int i = 0; i < periods / PRELOAD_COUNT; i++) {
+            int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
+
             // Load PRELOAD_COUNT rows from global memory
 #pragma unroll
             for (int j = 0; j < PRELOAD_COUNT; j++) {
@@ -56,33 +57,34 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
     int acc = 0;
     if (threadIdx.y == 1) {
         bool offset_flag = false;
-        int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
-
         for (int i = 0; i < periods / PRELOAD_COUNT; i++) {
+            int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
             // Load PRELOAD_COUNT rows from shared memory
 #pragma unroll
             for (int j = 0; j < PRELOAD_COUNT; j++) {
-                cache[j] = shared[threadIdx.x + j * blockDim.x];
+                cache[j] = shared[offset + threadIdx.x + j * blockDim.x];
             }
 
             // Calculate prefix sum
 #pragma unroll
             for (int j = 0; j < PRELOAD_COUNT; j++) {
                 acc += cache[j];
-                // int warp_sum = acc;
-                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 16);
-                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 8);
-                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 4);
-                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
-                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
+                int warp_sum = acc;
+                warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 16);
+                warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 8);
+                warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 4);
+                warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
+                warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
                 cache[j] = acc;
-                // atomicAdd(&sum[i * PRELOAD_COUNT + j], warp_sum);
+                if (threadIdx.x % 32 == 0) {
+                    atomicAdd(&sum[i * PRELOAD_COUNT + j], warp_sum);
+                }
             }
 
             // Store to global
 #pragma unroll
             for (int j = 0; j < PRELOAD_COUNT; j++) {
-                account[offset + index + j * clients] = cache[j];
+                account[index + j * clients] = cache[j];
             }
 
             index += clients * PRELOAD_COUNT;
