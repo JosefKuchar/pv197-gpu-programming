@@ -31,7 +31,8 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
     // Producer warps
     if (threadIdx.y == 0) {
         bool offset_flag = false;
-        for (int i = 0; i < periods / PRELOAD_COUNT; i++) {
+        for (int i = 1; i < periods / PRELOAD_COUNT; i++) {
+            index += clients * PRELOAD_COUNT;
             int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
 
             // Load PRELOAD_COUNT rows from global memory
@@ -45,25 +46,30 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
                 shared[offset + threadIdx.x + j * blockDim.x] = cache[j];
             }
 
-            index += clients * PRELOAD_COUNT;
             offset_flag = !offset_flag;
 
             __syncthreads();
         }
     }
 
-    __syncthreads();
-
     // Consumer warps
     int acc = 0;
     if (threadIdx.y == 1) {
-        bool offset_flag = false;
+        bool offset_flag = true;
         for (int i = 0; i < periods / PRELOAD_COUNT; i++) {
-            int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
-            // Load PRELOAD_COUNT rows from shared memory
+            if (i == 0) {
+                // Load PRELOAD_COUNT rows from global memory
 #pragma unroll
-            for (int j = 0; j < PRELOAD_COUNT; j++) {
-                cache[j] = shared[offset + threadIdx.x + j * blockDim.x];
+                for (int j = 0; j < PRELOAD_COUNT; j++) {
+                    cache[j] = changes[index + j * clients];
+                }
+            } else {
+                int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
+                // Load PRELOAD_COUNT rows from shared memory
+#pragma unroll
+                for (int j = 0; j < PRELOAD_COUNT; j++) {
+                    cache[j] = shared[offset + threadIdx.x + j * blockDim.x];
+                }
             }
 
             // Calculate prefix sum
