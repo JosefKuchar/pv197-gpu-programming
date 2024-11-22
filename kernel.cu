@@ -12,8 +12,6 @@
 // Number of rows to preload in each iteration
 #define PRELOAD_COUNT 16
 
-#define ROWS 8
-
 /**
  * @brief General kernel
  *
@@ -24,52 +22,79 @@
  * @param periods Period count
  */
 __global__ void kernel(int* changes, int* account, int* sum, int clients, int periods) {
-    __shared__ volatile int shared[BLOCK_SIZE * ROWS];
+    __shared__ volatile int shared[BLOCK_SIZE * PRELOAD_COUNT * 2];
 
-    int index = blockIdx.x * blockDim.x + threadIdx.x + threadIdx.y * clients * PRELOAD_COUNT;
-
-    int acc = 0;
     int cache[PRELOAD_COUNT];
-    for (int j = 0; j < periods / (PRELOAD_COUNT * ROWS); j++) {
-        // Load PRELOAD_COUNT rows from global memory
-#pragma unroll
-        for (int k = 0; k < PRELOAD_COUNT; k++) {
-            cache[k] = changes[index + k * clients];
-        }
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
 
-        // Calculate prefix sum
+    // Producer warps
+    if (threadIdx.y == 0) {
+        bool offset_flag = false;
+        int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
+        for (int i = 0; i < periods / PRELOAD_COUNT; i++) {
+            // Load PRELOAD_COUNT rows from global memory
 #pragma unroll
-        for (int k = 0; k < PRELOAD_COUNT; k++) {
-            acc += cache[k];
-            int warp_sum = acc;
-            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 16);
-            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 8);
-            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 4);
-            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
-            warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
-            cache[k] = acc;
-            // sums[k] = warp_sum;
-        }
-
-        // Store PRELOAD_COUNT rows to global memory
+            for (int j = 0; j < PRELOAD_COUNT; j++) {
+                cache[j] = changes[index + j * clients];
+            }
+            // Store PRELOAD_COUNT rows to shared memory
 #pragma unroll
-        for (int k = 0; k < PRELOAD_COUNT; k++) {
-            account[index + k * clients] = cache[k];
-        }
+            for (int j = 0; j < PRELOAD_COUNT; j++) {
+                shared[offset + threadIdx.x + j * blockDim.x] = cache[j];
+            }
 
-        //         // First thread in warp stores the reduction sum
-        //         if (threadIdx.x % 32 == 0) {
-        // #pragma unroll
-        //             for (int k = 0; k < PRELOAD_COUNT; k++) {
-        //                 atomicAdd(&sum[j * PRELOAD_COUNT + k], sums[k]);
-        //             }
-        //         }
-        index += ROWS * PRELOAD_COUNT * clients;
+            index += clients * PRELOAD_COUNT;
+            offset_flag = !offset_flag;
+
+            __syncthreads();
+        }
+    }
+
+    __syncthreads();
+
+    // Consumer warps
+    int acc = 0;
+    if (threadIdx.y == 1) {
+        bool offset_flag = false;
+        int offset = offset_flag ? BLOCK_SIZE * PRELOAD_COUNT : 0;
+
+        for (int i = 0; i < periods / PRELOAD_COUNT; i++) {
+            // Load PRELOAD_COUNT rows from shared memory
+#pragma unroll
+            for (int j = 0; j < PRELOAD_COUNT; j++) {
+                cache[j] = shared[threadIdx.x + j * blockDim.x];
+            }
+
+            // Calculate prefix sum
+#pragma unroll
+            for (int j = 0; j < PRELOAD_COUNT; j++) {
+                acc += cache[j];
+                // int warp_sum = acc;
+                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 16);
+                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 8);
+                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 4);
+                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
+                // warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
+                cache[j] = acc;
+                // atomicAdd(&sum[i * PRELOAD_COUNT + j], warp_sum);
+            }
+
+            // Store to global
+#pragma unroll
+            for (int j = 0; j < PRELOAD_COUNT; j++) {
+                account[offset + index + j * clients] = cache[j];
+            }
+
+            index += clients * PRELOAD_COUNT;
+            offset_flag = !offset_flag;
+
+            __syncthreads();
+        }
     }
 }
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
-    dim3 block(BLOCK_SIZE, ROWS);
+    dim3 block(BLOCK_SIZE, 2);
 
     // General "slower" kernel
     kernel<<<clients / BLOCK_SIZE, block>>>(changes, account, sum, clients, periods);
