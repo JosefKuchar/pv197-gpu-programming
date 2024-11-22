@@ -25,6 +25,7 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
     __shared__ volatile int shared[BLOCK_SIZE * PRELOAD_COUNT * 2];
 
     int cache[PRELOAD_COUNT];
+    int sums[PRELOAD_COUNT];
     int index = blockIdx.x * blockDim.x + threadIdx.x;
 
     // Producer warps
@@ -76,15 +77,21 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
                 warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 2);
                 warp_sum += __shfl_down_sync(0xFFFFFFFF, warp_sum, 1);
                 cache[j] = acc;
-                if (threadIdx.x % 32 == 0) {
-                    atomicAdd(&sum[i * PRELOAD_COUNT + j], warp_sum);
-                }
+                sums[j] = warp_sum;
             }
 
             // Store to global
 #pragma unroll
             for (int j = 0; j < PRELOAD_COUNT; j++) {
                 account[index + j * clients] = cache[j];
+            }
+
+            // Store sums
+            if (threadIdx.x % 32 == 0) {
+#pragma unroll
+                for (int j = 0; j < PRELOAD_COUNT; j++) {
+                    atomicAdd(&sum[i * PRELOAD_COUNT + j], sums[j]);
+                }
             }
 
             index += clients * PRELOAD_COUNT;
