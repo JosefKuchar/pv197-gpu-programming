@@ -1,8 +1,6 @@
 /**
  * @brief CUDA kernel for prefix sum and reduction
- * Uses naive prefix sum and warp shuffle reduction
- * Optimized for memory access
- * Special case for 8192x8192 matrix for better compiler optimization
+ * Uses producer-consumer model with shared memory
  *
  * @author Josef Kuchař (567769)
  */
@@ -104,7 +102,5 @@ __global__ void kernel(int* changes, int* account, int* sum, int clients, int pe
 
 void solveGPU(int* changes, int* account, int* sum, int clients, int periods) {
     dim3 block(BLOCK_SIZE, 2);
-
-    // General "slower" kernel
     kernel<<<clients / BLOCK_SIZE, block>>>(changes, account, sum, clients, periods);
 }
